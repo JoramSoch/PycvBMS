@@ -18,9 +18,10 @@ class GLM:
     
     # initialize GLM
     #-------------------------------------------------------------------------#
-    def __init__(self, Y, X, V):
+    def __init__(self, Y, X, V=None):
         self.Y = Y                          # data matrix
         self.X = X                          # design matrix
+        if V is None: V = np.eye(Y.shape[0])# covariance matrix
         self.V = V                          # covariance matrix
         self.P = np.linalg.inv(V)           # precision matrix
         self.n = Y.shape[0]                 # number of observations
@@ -123,6 +124,98 @@ class GLM:
             m02 = mn1; L02 = Ln1; a02 = an1; b02 = bn1;
             mn2, Ln2, an2, bn2 = S2.Bayes(m02, L02, a02, b02)
             oosLME[j,:] = S2.LME(L02, a02, b02, Ln2, an2, bn2)
+            
+        # return cross-validated log model evidence
+        cvLME = np.sum(oosLME,0)
+        return cvLME
+    
+    
+###############################################################################
+# class: Poisson distribution                                                 #
+###############################################################################
+class Poiss:
+    """Poisson distribution"""
+    
+    # initialize Poisson
+    #-------------------------------------------------------------------------#
+    def __init__(self, Y, x=None):
+        self.Y = Y                          # data matrix
+        if x is None:
+            x = np.ones(Y.shape[0])         # design vector
+        self.x = x
+        self.n = Y.shape[0]                 # number of observations
+        self.v = Y.shape[1]                 # number of instances
+        
+    # function: maximum likelihood estimation
+    #-------------------------------------------------------------------------#
+    def MLE(self):
+        l_est = 1/self.n * np.sum(self.Y,0)
+        return l_est
+    
+    # function: Bayesian estimation
+    #-------------------------------------------------------------------------#
+    def Bayes(self, a0, b0):
+        
+        # enlarge priors if required
+        if np.isscalar(a0):
+            a0 = a0 * np.ones(self.v)
+        
+        # estimate posterior parameters
+        an = a0 + self.n * np.sum(self.Y,0)
+        bn = b0 + self.n * np.sum(self.x)
+        
+        # return posterior parameters
+        return an, bn
+    
+    # function: log model evidence
+    #-------------------------------------------------------------------------#
+    def LME(self, a0, b0, an, bn):
+        
+        # calculate log model evidence
+        x   = np.reshape(self.x, (self.n, 1))
+        X   = np.tile(x, (1, self.v))
+        LME = np.sum(self.Y * np.log(X), 0) - np.sum(sp_special.gammaln(self.Y+1), 0) \
+            + sp_special.gammaln(an)        - sp_special.gammaln(a0)                  \
+            + a0 * np.log(b0)               - an * np.log(bn)
+        
+        # return log model evidence
+        return LME
+    
+    # function: cross-validated log model evidence
+    #-------------------------------------------------------------------------#
+    def cvLME(self, S=2):
+        
+        # determine data partition
+        npS  = np.int(self.n/S);# number of data points per subset, truncated
+        inds = range(S*npS)     # indices for all data, without remainders
+        
+        # set non-informative priors
+        a0_ni = 0;
+        b0_ni = 0;
+        
+        # calculate out-of-sample log model evidences
+        #---------------------------------------------------------------------#
+        oosLME = np.zeros((S,self.v))
+        for j in range(S):
+            
+            # set indices
+            i2 = range(j*npS, (j+1)*npS)                # test indices
+            i1 = [i for i in inds if i not in i2]       # training indices
+            
+            # partition data
+            Y1 = self.Y[i1,:]                           # training data
+            x1 = self.x[i1]
+            S1 = Poiss(Y1, x1)
+            Y2 = self.Y[i2,:]                           # test data
+            x2 = self.x[i2]
+            S2 = Poiss(Y2, x2)
+            
+            # calculate oosLME
+            a01 = a0_ni; b01 = b0_ni;
+            an1, bn1 = S1.Bayes(a01, b01)
+            a02 = an1; b02 = bn1;
+            an2, bn2 = S2.Bayes(a02, b02)
+            oosLME[j,:] = S2.LME(a02, b02, an2, bn2)
             
         # return cross-validated log model evidence
         cvLME = np.sum(oosLME,0)
